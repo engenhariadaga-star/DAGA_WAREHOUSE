@@ -7,6 +7,7 @@
 <meta name="description" content="Controle de almoxarifado industrial" />
 <meta name="theme-color" content="#0B1015" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="DAGA" />
 <link rel="manifest" href="manifest.json" />
@@ -61,7 +62,7 @@
 <body>
 <div id="root"></div>
 
-<script type="text/babel" data-presets="react">
+<script type="text/plain-jsx" id="daga-app-source">
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
 /* =========================================================================
@@ -1633,6 +1634,32 @@ function App(){
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+
+<script>
+  // Transforma manualmente o JSX acima usando o Babel, forçando o modo
+  // "classic" (React.createElement) em vez do runtime automático (que usa
+  // "import" internamente e quebra fora de um ambiente de módulos ES).
+  (function(){
+    var sourceEl = document.getElementById("daga-app-source");
+    var sourceCode = sourceEl.textContent;
+    try {
+      var output = Babel.transform(sourceCode, {
+        presets: [["react", { runtime: "classic" }]],
+        filename: "daga-app.jsx",
+      }).code;
+      var runScript = document.createElement("script");
+      runScript.textContent = output;
+      document.body.appendChild(runScript);
+    } catch (err) {
+      document.getElementById("root").innerHTML =
+        '<div style="color:#EAF0F5;background:#0B1015;min-height:100vh;padding:24px;font-family:sans-serif;">' +
+        '<h2 style="color:#E4574B;">Erro ao carregar o aplicativo</h2>' +
+        '<pre style="white-space:pre-wrap;font-size:12px;opacity:.8;">' + String(err && err.message || err) + '</pre>' +
+        '</div>';
+      console.error("Erro ao transformar o JSX do DAGA WAREHOUSE:", err);
+    }
+  })();
 </script>
 </body>
 </html>
