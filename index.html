@@ -1,0 +1,1638 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>DAGA WAREHOUSE</title>
+<meta name="description" content="Controle de almoxarifado industrial" />
+<meta name="theme-color" content="#0B1015" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="DAGA" />
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%230B1015'/%3E%3Ctext x='50' y='68' font-size='58' font-family='Arial Black' fill='%23F2A93B' text-anchor='middle'%3ED%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/JsBarcode/3.11.5/JsBarcode.all.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<style>
+  :root{
+    --bg:#0B1015;
+    --surface:#141C24;
+    --surface2:#1C2731;
+    --border:#2B3944;
+    --amber:#F2A93B;
+    --amber-dark:#C97F1E;
+    --blue:#3B8CC4;
+    --green:#3FB27F;
+    --red:#E4574B;
+    --text:#EAF0F5;
+    --dim:#8D9BA8;
+  }
+  html,body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;-webkit-tap-highlight-color:transparent;overscroll-behavior-y:contain;}
+  .font-display{font-family:'Oswald',sans-serif;letter-spacing:0.02em;}
+  .font-mono{font-family:'JetBrains Mono',monospace;}
+  .hazard-stripe{
+    background-image: repeating-linear-gradient(135deg, var(--amber), var(--amber) 10px, #0B1015 10px, #0B1015 20px);
+  }
+  ::-webkit-scrollbar{width:6px;height:6px;}
+  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px;}
+  input[type="text"],input[type="password"],input[type="number"],input[type="date"],input[type="datetime-local"],select,textarea{
+    background:var(--surface2); border:1px solid var(--border); color:var(--text);
+  }
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--amber); outline-offset:1px; border-color:var(--amber);}
+  .btn-press{transition:transform .08s ease;}
+  .btn-press:active{transform:scale(0.96);}
+  .scrollbar-none::-webkit-scrollbar{display:none;}
+  .scrollbar-none{-ms-overflow-style:none;scrollbar-width:none;}
+  @keyframes slideUp{from{transform:translateY(24px);opacity:0}to{transform:translateY(0);opacity:1}}
+  .anim-slide-up{animation:slideUp .22s ease-out;}
+  @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+  .anim-fade{animation:fadeIn .18s ease-out;}
+  @keyframes toastIn{from{transform:translateY(-16px);opacity:0}to{transform:translateY(0);opacity:1}}
+  .anim-toast{animation:toastIn .2s ease-out;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+/* =========================================================================
+   DAGA WAREHOUSE — Controle de Almoxarifado Industrial
+   Camada de dados: localStorage (chave DAGA_DB_V1)
+   Preparado para futura migração para banco de dados real (ver README.md
+   e a função de acesso a dados isolada em `db` abaixo).
+   ========================================================================= */
+
+/* ---------------------------- Camada de dados --------------------------- */
+
+const DB_KEY = "DAGA_DB_V1";
+const SESSION_KEY = "DAGA_SESSION_V1";
+
+const UNITS = ["UN","CX","KG","L","M","PC","PAR","ROLO","GALAO"];
+const MOV_TYPES = {
+  entrada:  { label: "Entrada",   color: "var(--green)", sign: +1 },
+  saida:    { label: "Saída",     color: "var(--red)",   sign: -1 },
+  devolucao:{ label: "Devolução", color: "var(--blue)",  sign: +1 },
+  ajuste:   { label: "Ajuste",    color: "var(--amber)", sign: null }, // sinal vem da própria quantidade
+};
+
+function uid(prefix){
+  return prefix + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+}
+
+function nowISO(){ return new Date().toISOString(); }
+
+function seedDB(){
+  const categories = [
+    { id:"cat_ferr",   name:"Ferramentas",               color:"#F2A93B" },
+    { id:"cat_epi",    name:"EPI - Proteção Individual",  color:"#3FB27F" },
+    { id:"cat_elet",   name:"Material Elétrico",          color:"#3B8CC4" },
+    { id:"cat_hidr",   name:"Material Hidráulico",        color:"#4FA8E0" },
+    { id:"cat_cons",   name:"Consumíveis",                color:"#E4574B" },
+    { id:"cat_rolam",  name:"Rolamentos e Correias",      color:"#9B7BD1" },
+  ];
+
+  const suppliers = [
+    { id:"sup_1", name:"Aço Forte Distribuidora Ltda", cnpj:"12.345.678/0001-90", phone:"(45) 3222-1100", email:"vendas@acoforte.com.br" },
+    { id:"sup_2", name:"EPI Total Equipamentos",        cnpj:"98.765.432/0001-10", phone:"(45) 3221-4455", email:"contato@epitotal.com.br" },
+    { id:"sup_3", name:"Hidro Mecânica Paraná",         cnpj:"11.222.333/0001-44", phone:"(45) 3223-7788", email:"comercial@hidromecanica.com.br" },
+    { id:"sup_4", name:"ElétricaMax Materiais",         cnpj:"22.333.444/0001-55", phone:"(45) 3224-9900", email:"suporte@eletricamax.com.br" },
+  ];
+
+  const items = [
+    { id:"item_1",  code:"7891000000011", name:"Luva de Raspa Cano Curto",       description:"Luva de proteção em raspa de couro, cano curto.", categoryId:"cat_epi",   supplierId:"sup_2", unit:"PAR",  location:"A1-03", minStock:20, initialStock:50, cost:12.90, photo:null, active:true },
+    { id:"item_2",  code:"7891000000028", name:"Capacete de Segurança Classe B", description:"Capacete com jugular, cor branca.",                categoryId:"cat_epi",   supplierId:"sup_2", unit:"UN",   location:"A1-05", minStock:15, initialStock:8,  cost:29.50, photo:null, active:true },
+    { id:"item_3",  code:"7891000000035", name:"Parafuso Sextavado M10x40",      description:"Parafuso sextavado zincado M10x40mm, caixa c/100.", categoryId:"cat_cons", supplierId:"sup_1", unit:"CX",   location:"B2-10", minStock:10, initialStock:40, cost:35.00, photo:null, active:true },
+    { id:"item_4",  code:"7891000000042", name:"Rolamento 6205 ZZ",              description:"Rolamento rígido de esferas 6205 ZZ.",             categoryId:"cat_rolam", supplierId:"sup_1", unit:"UN",   location:"C1-02", minStock:6,  initialStock:4,  cost:48.00, photo:null, active:true },
+    { id:"item_5",  code:"7891000000059", name:"Correia V A-45",                 description:"Correia trapezoidal perfil A, 45 polegadas.",      categoryId:"cat_rolam", supplierId:"sup_3", unit:"UN",   location:"C1-08", minStock:5,  initialStock:12, cost:32.90, photo:null, active:true },
+    { id:"item_6",  code:"7891000000066", name:"Cabo Flexível 2,5mm² Preto",     description:"Cabo flexível 750V, rolo com 100 metros.",         categoryId:"cat_elet",  supplierId:"sup_4", unit:"ROLO", location:"D3-01", minStock:4,  initialStock:10, cost:189.90,photo:null, active:true },
+    { id:"item_7",  code:"7891000000073", name:"Disjuntor Bipolar 32A",          description:"Disjuntor termomagnético bipolar 32A.",            categoryId:"cat_elet",  supplierId:"sup_4", unit:"UN",   location:"D3-06", minStock:8,  initialStock:3,  cost:24.50, photo:null, active:true },
+    { id:"item_8",  code:"7891000000080", name:"Registro de Gaveta 1\"",         description:"Registro de gaveta bruto de 1 polegada.",          categoryId:"cat_hidr",  supplierId:"sup_3", unit:"UN",   location:"E1-04", minStock:6,  initialStock:15, cost:38.70, photo:null, active:true },
+    { id:"item_9",  code:"7891000000097", name:"Chave de Fenda 1/4x6\"",         description:"Chave de fenda haste 1/4 x 6 polegadas.",          categoryId:"cat_ferr",  supplierId:"sup_1", unit:"UN",   location:"A2-01", minStock:5,  initialStock:18, cost:14.20, photo:null, active:true },
+    { id:"item_10", code:"7891000000103", name:"Óculos de Proteção Incolor",     description:"Óculos de segurança lente incolor antirrisco.",   categoryId:"cat_epi",   supplierId:"sup_2", unit:"UN",   location:"A1-08", minStock:25, initialStock:60, cost:8.90,  photo:null, active:true },
+  ];
+
+  const daysAgo = (n) => new Date(Date.now() - n*86400000).toISOString();
+
+  const movements = [
+    { id: uid("mov"), itemId:"item_1", type:"saida",  quantity:10, datetime:daysAgo(6), responsible:"João Silva",   requester:"Carlos Mendes", os:"OS-1042", costCenter:"CC-102 Manutenção", note:"Reposição de EPI turno A" },
+    { id: uid("mov"), itemId:"item_2", type:"saida",  quantity:5,  datetime:daysAgo(5), responsible:"João Silva",   requester:"Equipe Elétrica", os:"OS-1043", costCenter:"CC-201 Elétrica",   note:"" },
+    { id: uid("mov"), itemId:"item_4", type:"saida",  quantity:2,  datetime:daysAgo(4), responsible:"João Silva",   requester:"Manutenção Mecânica", os:"OS-1050", costCenter:"CC-102 Manutenção", note:"Troca em motor da linha 2" },
+    { id: uid("mov"), itemId:"item_7", type:"saida",  quantity:3,  datetime:daysAgo(3), responsible:"Administrador Geral", requester:"Equipe Elétrica", os:"OS-1055", costCenter:"CC-201 Elétrica", note:"" },
+    { id: uid("mov"), itemId:"item_3", type:"entrada",quantity:20, datetime:daysAgo(3), responsible:"Administrador Geral", requester:"-", os:"NF-8891", costCenter:"CC-100 Almoxarifado", note:"Recebimento de fornecedor" },
+    { id: uid("mov"), itemId:"item_5", type:"devolucao", quantity:2, datetime:daysAgo(2), responsible:"João Silva", requester:"Manutenção Mecânica", os:"OS-1050", costCenter:"CC-102 Manutenção", note:"Material não utilizado" },
+    { id: uid("mov"), itemId:"item_6", type:"saida",  quantity:1,  datetime:daysAgo(1), responsible:"João Silva",   requester:"Equipe Elétrica", os:"OS-1061", costCenter:"CC-201 Elétrica", note:"" },
+    { id: uid("mov"), itemId:"item_9", type:"ajuste", quantity:-1, datetime:daysAgo(1), responsible:"Administrador Geral", requester:"-", os:"-", costCenter:"CC-100 Almoxarifado", note:"Correção de inventário: item danificado" },
+    { id: uid("mov"), itemId:"item_10",type:"saida",  quantity:8,  datetime:daysAgo(0), responsible:"João Silva",   requester:"Todos os setores", os:"OS-1070", costCenter:"CC-100 Almoxarifado", note:"Distribuição geral" },
+  ];
+
+  const users = [
+    { id: uid("usr"), username:"admin",    password:"admin123", name:"Administrador Geral", role:"Administrador" },
+    { id: uid("usr"), username:"operador", password:"1234",     name:"João Silva",          role:"Operador de Almoxarifado" },
+  ];
+
+  return { categories, suppliers, items, movements, users };
+}
+
+function loadDB(){
+  try{
+    const raw = localStorage.getItem(DB_KEY);
+    if(!raw){
+      const seeded = seedDB();
+      localStorage.setItem(DB_KEY, JSON.stringify(seeded));
+      return seeded;
+    }
+    return JSON.parse(raw);
+  }catch(e){
+    const seeded = seedDB();
+    localStorage.setItem(DB_KEY, JSON.stringify(seeded));
+    return seeded;
+  }
+}
+
+function persistDB(db){
+  localStorage.setItem(DB_KEY, JSON.stringify(db));
+}
+
+/* ------------------------------ Utilidades ------------------------------ */
+
+function formatBRL(v){
+  return new Intl.NumberFormat("pt-BR", { style:"currency", currency:"BRL" }).format(v || 0);
+}
+function formatDateTime(iso){
+  if(!iso) return "-";
+  const d = new Date(iso);
+  return d.toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" });
+}
+function toDatetimeLocal(iso){
+  const d = iso ? new Date(iso) : new Date();
+  const pad = n => String(n).padStart(2,"0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function computeStock(item, movements){
+  let stock = Number(item.initialStock || 0);
+  for(const m of movements){
+    if(m.itemId !== item.id) continue;
+    if(m.type === "entrada") stock += Number(m.quantity);
+    else if(m.type === "saida") stock -= Number(m.quantity);
+    else if(m.type === "devolucao") stock += Number(m.quantity);
+    else if(m.type === "ajuste") stock += Number(m.quantity);
+  }
+  return stock;
+}
+
+/* --------------------------------- Ícones -------------------------------- */
+
+function Icon({ name, size=22, className="" }){
+  const s = size;
+  const common = { width:s, height:s, viewBox:"0 0 24 24", fill:"none", stroke:"currentColor", strokeWidth:"1.8", strokeLinecap:"round", strokeLinejoin:"round", className };
+  switch(name){
+    case "menu": return <svg {...common}><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>;
+    case "close": return <svg {...common}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>;
+    case "home": return <svg {...common}><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>;
+    case "box": return <svg {...common}><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg>;
+    case "tag": return <svg {...common}><path d="M20.59 13.41L11 3.83A2 2 0 009.59 3.2L3 3v6.59a2 2 0 00.59 1.41l9.59 9.59a2 2 0 002.82 0l4.59-4.59a2 2 0 000-2.82z"/><circle cx="7.5" cy="7.5" r="1.2" fill="currentColor" stroke="none"/></svg>;
+    case "truck": return <svg {...common}><rect x="1" y="6" width="14" height="11" rx="1"/><path d="M15 10h4l3 3v4h-7z"/><circle cx="5.5" cy="19" r="1.6"/><circle cx="17.5" cy="19" r="1.6"/></svg>;
+    case "in": return <svg {...common}><path d="M12 5v14"/><path d="M6 11l6-6 6 6"/><path d="M4 21h16"/></svg>;
+    case "out": return <svg {...common}><path d="M12 19V5"/><path d="M18 13l-6 6-6-6"/><path d="M4 3h16"/></svg>;
+    case "clipboard": return <svg {...common}><rect x="6" y="4" width="12" height="17" rx="1.5"/><rect x="9" y="2.5" width="6" height="3" rx="1"/><line x1="9" y1="10" x2="15" y2="10"/><line x1="9" y1="14" x2="15" y2="14"/></svg>;
+    case "chart": return <svg {...common}><line x1="4" y1="20" x2="20" y2="20"/><rect x="6" y="12" width="3" height="6"/><rect x="11" y="8" width="3" height="10"/><rect x="16" y="4" width="3" height="14"/></svg>;
+    case "alert": return <svg {...common}><path d="M12 3l10 18H2z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17.3" r="0.4" fill="currentColor"/></svg>;
+    case "user": return <svg {...common}><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>;
+    case "logout": return <svg {...common}><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><path d="M16 17l5-5-5-5"/><line x1="21" y1="12" x2="9" y2="12"/></svg>;
+    case "search": return <svg {...common}><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>;
+    case "plus": return <svg {...common}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>;
+    case "edit": return <svg {...common}><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>;
+    case "trash": return <svg {...common}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>;
+    case "barcode": return <svg {...common}><line x1="4" y1="4" x2="4" y2="20"/><line x1="7" y1="4" x2="7" y2="20"/><line x1="10" y1="4" x2="10" y2="20"/><line x1="13" y1="4" x2="13" y2="20" strokeWidth="3"/><line x1="16" y1="4" x2="16" y2="20"/><line x1="19" y1="4" x2="19" y2="20" strokeWidth="3"/></svg>;
+    case "camera": return <svg {...common}><path d="M4 8h3l2-2h6l2 2h3v11H4z"/><circle cx="12" cy="13.5" r="3.2"/></svg>;
+    case "check": return <svg {...common}><polyline points="20 6 9 17 4 12"/></svg>;
+    case "x-circle": return <svg {...common}><circle cx="12" cy="12" r="9"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>;
+    case "filter": return <svg {...common}><polygon points="4 4 20 4 14 12.5 14 19 10 21 10 12.5 4 4"/></svg>;
+    case "download": return <svg {...common}><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>;
+    case "arrow-left": return <svg {...common}><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>;
+    case "layers": return <svg {...common}><polygon points="12 2 2 8 12 14 22 8 12 2"/><polyline points="2 14 12 20 22 14"/><polyline points="2 11 12 17 22 11"/></svg>;
+    case "refresh": return <svg {...common}><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.5 9a8.5 8.5 0 00-14.6-4.6L1 10M23 14l-4.9 5.6A8.5 8.5 0 013.5 15"/></svg>;
+    case "qr": return <svg {...common}><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><line x1="14" y1="14" x2="14" y2="21"/><line x1="21" y1="14" x2="21" y2="21"/><line x1="17.5" y1="14" x2="17.5" y2="17.5"/><line x1="14" y1="17.5" x2="21" y2="17.5"/></svg>;
+    default: return null;
+  }
+}
+
+/* -------------------------------- Toast ---------------------------------- */
+
+function useToast(){
+  const [toast, setToast] = useState(null);
+  const timerRef = useRef(null);
+  const show = useCallback((message, type="info") => {
+    setToast({ message, type, key: Date.now() });
+    if(timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setToast(null), 3200);
+  }, []);
+  return [toast, show];
+}
+
+function Toast({ toast }){
+  if(!toast) return null;
+  const colors = {
+    success: "border-l-[var(--green)]",
+    error: "border-l-[var(--red)]",
+    info: "border-l-[var(--amber)]",
+  };
+  const icon = toast.type === "success" ? "check" : toast.type === "error" ? "x-circle" : "alert";
+  return (
+    <div key={toast.key} className={`fixed top-3 left-1/2 -translate-x-1/2 z-[200] w-[92%] max-w-sm anim-toast`}>
+      <div className={`bg-[var(--surface2)] border border-[var(--border)] ${colors[toast.type]||colors.info} border-l-4 rounded-lg shadow-2xl px-4 py-3 flex items-center gap-3`}>
+        <Icon name={icon} size={20} className={toast.type==="success"?"text-[var(--green)]":toast.type==="error"?"text-[var(--red)]":"text-[var(--amber)]"} />
+        <p className="text-sm text-[var(--text)] leading-snug">{toast.message}</p>
+      </div>
+    </div>
+  );
+}
+
+/* ----------------------------- Componentes UI ----------------------------- */
+
+function BigButton({ icon, label, sub, onClick, tone="amber", className="" }){
+  const tones = {
+    amber: "bg-[var(--amber)] text-[#1A1305] active:bg-[var(--amber-dark)]",
+    blue: "bg-[var(--blue)] text-white active:brightness-90",
+    red: "bg-[var(--red)] text-white active:brightness-90",
+    green: "bg-[var(--green)] text-[#082014] active:brightness-90",
+    surface: "bg-[var(--surface2)] text-[var(--text)] border border-[var(--border)] active:bg-[var(--surface)]",
+  };
+  return (
+    <button onClick={onClick} className={`btn-press w-full rounded-2xl px-4 py-4 flex items-center gap-3 shadow-lg ${tones[tone]} ${className}`}>
+      <div className="shrink-0 w-11 h-11 rounded-xl bg-black/15 flex items-center justify-center">
+        <Icon name={icon} size={24}/>
+      </div>
+      <div className="text-left min-w-0">
+        <div className="font-display font-semibold text-base uppercase tracking-wide truncate">{label}</div>
+        {sub && <div className="text-xs opacity-80 truncate">{sub}</div>}
+      </div>
+    </button>
+  );
+}
+
+function StatCard({ label, value, icon, tone="amber", onClick }){
+  const toneColor = { amber:"var(--amber)", red:"var(--red)", green:"var(--green)", blue:"var(--blue)" }[tone];
+  return (
+    <button onClick={onClick} className="btn-press text-left bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4 flex flex-col gap-2 min-w-0">
+      <div className="flex items-center justify-between">
+        <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: toneColor+"22", color: toneColor }}>
+          <Icon name={icon} size={18}/>
+        </div>
+      </div>
+      <div className="font-display text-2xl font-semibold leading-none truncate">{value}</div>
+      <div className="text-[11px] text-[var(--dim)] uppercase tracking-wide truncate">{label}</div>
+    </button>
+  );
+}
+
+function Badge({ children, tone="dim" }){
+  const tones = {
+    dim: "bg-[var(--surface2)] text-[var(--dim)] border-[var(--border)]",
+    green: "bg-[var(--green)]/15 text-[var(--green)] border-[var(--green)]/30",
+    red: "bg-[var(--red)]/15 text-[var(--red)] border-[var(--red)]/30",
+    amber: "bg-[var(--amber)]/15 text-[var(--amber)] border-[var(--amber)]/30",
+    blue: "bg-[var(--blue)]/15 text-[var(--blue)] border-[var(--blue)]/30",
+  };
+  return <span className={`text-[10px] font-semibold uppercase tracking-wide border rounded-full px-2 py-1 ${tones[tone]}`}>{children}</span>;
+}
+
+function Field({ label, children, required, hint, className="" }){
+  return (
+    <label className={`block ${className}`}>
+      <span className="text-xs uppercase tracking-wide text-[var(--dim)] font-semibold flex items-center gap-1">
+        {label}{required && <span className="text-[var(--red)]">*</span>}
+      </span>
+      <div className="mt-1.5">{children}</div>
+      {hint && <span className="text-[11px] text-[var(--dim)] mt-1 block">{hint}</span>}
+    </label>
+  );
+}
+
+const inputCls = "w-full rounded-xl px-3.5 py-3 text-sm placeholder:text-[var(--dim)]";
+
+function Modal({ title, onClose, children, wide=false }){
+  return (
+    <div className="fixed inset-0 z-[150] flex items-end sm:items-center justify-center anim-fade">
+      <div className="absolute inset-0 bg-black/70" onClick={onClose}></div>
+      <div className={`relative w-full ${wide?"sm:max-w-2xl":"sm:max-w-md"} sm:rounded-2xl rounded-t-2xl bg-[var(--surface)] border border-[var(--border)] max-h-[92vh] flex flex-col anim-slide-up`}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] shrink-0">
+          <h3 className="font-display uppercase tracking-wide font-semibold text-lg">{title}</h3>
+          <button onClick={onClose} className="w-9 h-9 rounded-full bg-[var(--surface2)] flex items-center justify-center btn-press">
+            <Icon name="close" size={18}/>
+          </button>
+        </div>
+        <div className="overflow-y-auto px-5 py-4 flex-1">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmDialog({ open, title, message, onConfirm, onCancel }){
+  if(!open) return null;
+  return (
+    <div className="fixed inset-0 z-[180] flex items-center justify-center anim-fade">
+      <div className="absolute inset-0 bg-black/70" onClick={onCancel}></div>
+      <div className="relative w-[90%] max-w-sm bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-5 anim-slide-up">
+        <div className="w-12 h-12 rounded-full bg-[var(--red)]/15 flex items-center justify-center mb-3">
+          <Icon name="alert" size={24} className="text-[var(--red)]"/>
+        </div>
+        <h4 className="font-display font-semibold text-lg uppercase mb-1">{title}</h4>
+        <p className="text-sm text-[var(--dim)] mb-5">{message}</p>
+        <div className="flex gap-3">
+          <button onClick={onCancel} className="btn-press flex-1 rounded-xl py-3 bg-[var(--surface2)] border border-[var(--border)] font-semibold text-sm">Cancelar</button>
+          <button onClick={onConfirm} className="btn-press flex-1 rounded-xl py-3 bg-[var(--red)] text-white font-semibold text-sm">Excluir</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ScannerModal({ onClose, onDetected, showToast }){
+  const regionId = "daga-scanner-region";
+  const scannerRef = useRef(null);
+  const [status, setStatus] = useState("iniciando"); // iniciando | ativo | erro
+  const [errorMsg, setErrorMsg] = useState("");
+  const handledRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    if(!window.Html5Qrcode){
+      setStatus("erro");
+      setErrorMsg("Biblioteca de leitura não carregada. Verifique sua conexão com a internet.");
+      return;
+    }
+    const instance = new window.Html5Qrcode(regionId, { verbose:false });
+    scannerRef.current = instance;
+
+    instance.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: { width: 250, height: 150 }, aspectRatio: 1.4 },
+      (decodedText) => {
+        if(handledRef.current) return;
+        handledRef.current = true;
+        onDetected(decodedText);
+      },
+      () => { /* ignora frames sem leitura */ }
+    ).then(() => { if(!cancelled) setStatus("ativo"); })
+     .catch((err) => {
+        if(cancelled) return;
+        setStatus("erro");
+        const msg = String(err || "");
+        if(msg.toLowerCase().includes("permission") || msg.toLowerCase().includes("notallowed")){
+          setErrorMsg("Permissão de câmera negada. Autorize o acesso à câmera nas configurações do navegador.");
+        }else if(msg.toLowerCase().includes("notfound")){
+          setErrorMsg("Nenhuma câmera encontrada neste dispositivo.");
+        }else{
+          setErrorMsg("Não foi possível acessar a câmera. Tente novamente ou digite o código manualmente.");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      if(scannerRef.current){
+        scannerRef.current.stop().then(() => scannerRef.current.clear()).catch(() => {});
+      }
+    };
+  }, []);
+
+  const close = () => {
+    if(scannerRef.current){
+      scannerRef.current.stop().then(() => scannerRef.current.clear()).catch(() => {});
+    }
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-[190] bg-black flex flex-col anim-fade">
+      <div className="flex items-center justify-between px-4 py-4 shrink-0">
+        <div>
+          <p className="font-display uppercase tracking-wide font-semibold text-white">Escanear Código</p>
+          <p className="text-xs text-[var(--dim)]">Aponte a câmera para o código de barras ou QR Code</p>
+        </div>
+        <button onClick={close} className="w-10 h-10 rounded-full bg-[var(--surface2)] flex items-center justify-center btn-press">
+          <Icon name="close" size={18} className="text-white"/>
+        </button>
+      </div>
+
+      <div className="flex-1 relative flex items-center justify-center px-4">
+        <div id={regionId} className="w-full max-w-sm rounded-2xl overflow-hidden bg-[var(--surface)]"></div>
+        {status === "iniciando" && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 pointer-events-none">
+            <Icon name="qr" size={40} className="text-[var(--amber)] animate-pulse"/>
+            <p className="text-sm text-[var(--dim)]">Iniciando câmera...</p>
+          </div>
+        )}
+        {status === "erro" && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
+            <Icon name="alert" size={36} className="text-[var(--red)]"/>
+            <p className="text-sm text-[var(--text)]">{errorMsg}</p>
+            <button onClick={close} className="btn-press mt-2 rounded-xl px-5 py-2.5 bg-[var(--surface2)] border border-[var(--border)] text-sm font-semibold text-white">Fechar e digitar manualmente</button>
+          </div>
+        )}
+      </div>
+
+      <div className="p-4 shrink-0">
+        <p className="text-center text-[11px] text-[var(--dim)] mb-3">Suporta códigos de barras (CODE128, EAN) e QR Code</p>
+        <button onClick={close} className="btn-press w-full rounded-2xl py-4 bg-[var(--surface2)] border border-[var(--border)] font-display font-semibold uppercase tracking-wide text-white">Cancelar</button>
+      </div>
+    </div>
+  );
+}
+
+/* --------------------------------- Header --------------------------------- */
+
+function TopBar({ title, onMenu, onBack }){
+  return (
+    <div className="sticky top-0 z-40 bg-[var(--bg)]/95 backdrop-blur border-b border-[var(--border)]">
+      <div className="h-1 hazard-stripe"></div>
+      <div className="flex items-center gap-3 px-4 py-3.5">
+        {onBack ? (
+          <button onClick={onBack} className="w-10 h-10 rounded-xl bg-[var(--surface)] border border-[var(--border)] flex items-center justify-center btn-press shrink-0">
+            <Icon name="arrow-left" size={20}/>
+          </button>
+        ) : (
+          <button onClick={onMenu} className="w-10 h-10 rounded-xl bg-[var(--surface)] border border-[var(--border)] flex items-center justify-center btn-press shrink-0">
+            <Icon name="menu" size={20}/>
+          </button>
+        )}
+        <h1 className="font-display text-lg font-semibold uppercase tracking-wide truncate">{title}</h1>
+      </div>
+    </div>
+  );
+}
+
+/* --------------------------------- Drawer --------------------------------- */
+
+function Drawer({ open, onClose, route, setRoute, user, onLogout, lowCount }){
+  const items = [
+    { key:"dashboard", label:"Dashboard", icon:"home" },
+    { key:"itens", label:"Itens", icon:"box" },
+    { key:"categorias", label:"Categorias", icon:"layers" },
+    { key:"fornecedores", label:"Fornecedores", icon:"truck" },
+    { key:"entrada", label:"Entrada de Material", icon:"in" },
+    { key:"saida", label:"Saída de Material", icon:"out" },
+    { key:"inventario", label:"Inventário", icon:"clipboard" },
+    { key:"relatorios", label:"Relatório de Estoque", icon:"chart" },
+    { key:"minimo", label:"Abaixo do Mínimo", icon:"alert", badge: lowCount },
+  ];
+  return (
+    <>
+      <div className={`fixed inset-0 z-[100] bg-black/70 transition-opacity ${open? "opacity-100 pointer-events-auto":"opacity-0 pointer-events-none"}`} onClick={onClose}></div>
+      <div className={`fixed top-0 left-0 h-full w-[82%] max-w-xs z-[110] bg-[var(--surface)] border-r border-[var(--border)] transition-transform duration-200 flex flex-col ${open? "translate-x-0":"-translate-x-full"}`}>
+        <div className="hazard-stripe h-1.5"></div>
+        <div className="px-5 py-5 border-b border-[var(--border)]">
+          <div className="flex items-center gap-2">
+            <div className="w-10 h-10 rounded-lg bg-[var(--amber)] text-[#1A1305] flex items-center justify-center font-display font-bold text-xl">D</div>
+            <div>
+              <div className="font-display font-bold text-lg uppercase leading-none tracking-wide">Daga</div>
+              <div className="text-[10px] text-[var(--dim)] uppercase tracking-widest">Warehouse</div>
+            </div>
+          </div>
+          <div className="mt-4 flex items-center gap-2.5 bg-[var(--surface2)] rounded-xl px-3 py-2.5">
+            <div className="w-8 h-8 rounded-full bg-[var(--amber)]/20 text-[var(--amber)] flex items-center justify-center">
+              <Icon name="user" size={16}/>
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold truncate">{user?.name}</div>
+              <div className="text-[11px] text-[var(--dim)] truncate">{user?.role}</div>
+            </div>
+          </div>
+        </div>
+        <nav className="flex-1 overflow-y-auto py-2 scrollbar-none">
+          {items.map(it => (
+            <button key={it.key} onClick={() => { setRoute(it.key); onClose(); }}
+              className={`w-full flex items-center gap-3 px-5 py-3.5 text-sm font-medium btn-press ${route===it.key ? "bg-[var(--amber)]/10 text-[var(--amber)] border-r-4 border-[var(--amber)]" : "text-[var(--text)]"}`}>
+              <Icon name={it.icon} size={19}/>
+              <span className="flex-1 text-left">{it.label}</span>
+              {!!it.badge && <span className="bg-[var(--red)] text-white text-[10px] font-bold rounded-full min-w-[20px] h-5 px-1 flex items-center justify-center">{it.badge}</span>}
+            </button>
+          ))}
+        </nav>
+        <div className="p-4 border-t border-[var(--border)]">
+          <button onClick={onLogout} className="btn-press w-full flex items-center justify-center gap-2 rounded-xl py-3 bg-[var(--surface2)] border border-[var(--border)] text-[var(--red)] font-semibold text-sm">
+            <Icon name="logout" size={18}/> Sair
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* --------------------------------- Login ---------------------------------- */
+
+function LoginScreen({ users, onLogin }){
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const submit = (e) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    setTimeout(() => {
+      const found = users.find(u => u.username.toLowerCase() === username.trim().toLowerCase() && u.password === password);
+      if(found){ onLogin(found); }
+      else { setError("Usuário ou senha inválidos."); }
+      setLoading(false);
+    }, 350);
+  };
+
+  return (
+    <div className="min-h-screen flex flex-col justify-center px-6 py-10 relative overflow-hidden">
+      <div className="absolute top-0 left-0 right-0 h-2 hazard-stripe"></div>
+      <div className="absolute -top-24 -right-24 w-64 h-64 rounded-full bg-[var(--amber)]/5 blur-3xl"></div>
+      <div className="max-w-sm mx-auto w-full anim-slide-up">
+        <div className="flex flex-col items-center mb-8">
+          <div className="w-20 h-20 rounded-2xl bg-[var(--amber)] text-[#1A1305] flex items-center justify-center font-display font-bold text-4xl shadow-[0_0_0_4px_rgba(242,169,59,0.15)]">D</div>
+          <h1 className="font-display font-bold text-3xl uppercase tracking-wide mt-4">Daga Warehouse</h1>
+          <p className="text-[var(--dim)] text-sm mt-1 uppercase tracking-widest text-center">Controle de Almoxarifado Industrial</p>
+        </div>
+
+        <form onSubmit={submit} className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-5 space-y-4 shadow-2xl">
+          <Field label="Usuário" required>
+            <input type="text" className={inputCls + " rounded-xl"} placeholder="ex: admin" value={username} onChange={e=>setUsername(e.target.value)} autoCapitalize="none" autoCorrect="off" />
+          </Field>
+          <Field label="Senha" required>
+            <input type="password" className={inputCls + " rounded-xl"} placeholder="••••••••" value={password} onChange={e=>setPassword(e.target.value)} />
+          </Field>
+          {error && (
+            <div className="flex items-center gap-2 text-[var(--red)] text-sm bg-[var(--red)]/10 border border-[var(--red)]/30 rounded-xl px-3 py-2.5">
+              <Icon name="alert" size={16}/> {error}
+            </div>
+          )}
+          <button type="submit" disabled={loading} className="btn-press w-full rounded-xl py-4 bg-[var(--amber)] text-[#1A1305] font-display font-semibold uppercase tracking-wide text-base shadow-lg disabled:opacity-60">
+            {loading ? "Entrando..." : "Entrar"}
+          </button>
+        </form>
+
+        <div className="mt-5 bg-[var(--surface2)]/50 border border-[var(--border)] rounded-xl p-3.5 text-xs text-[var(--dim)]">
+          <p className="font-semibold text-[var(--text)] mb-1">Acesso de demonstração</p>
+          <p>Administrador — usuário <span className="font-mono text-[var(--amber)]">admin</span> / senha <span className="font-mono text-[var(--amber)]">admin123</span></p>
+          <p>Operador — usuário <span className="font-mono text-[var(--amber)]">operador</span> / senha <span className="font-mono text-[var(--amber)]">1234</span></p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------- Dashboard -------------------------------- */
+
+function Dashboard({ items, categories, movements, setRoute, user }){
+  const stockOf = (it) => computeStock(it, movements);
+  const totalItems = items.filter(i=>i.active).length;
+  const totalValue = items.filter(i=>i.active).reduce((acc,i)=> acc + stockOf(i)*Number(i.cost||0), 0);
+  const lowItems = items.filter(i => i.active && stockOf(i) <= Number(i.minStock));
+  const today = new Date().toDateString();
+  const movToday = movements.filter(m => new Date(m.datetime).toDateString() === today).length;
+
+  const recent = [...movements].sort((a,b)=> new Date(b.datetime) - new Date(a.datetime)).slice(0,6);
+  const itemMap = Object.fromEntries(items.map(i=>[i.id,i]));
+
+  return (
+    <div className="px-4 py-5 space-y-5 pb-10">
+      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4 flex items-center justify-between">
+        <div>
+          <p className="text-xs text-[var(--dim)] uppercase tracking-wide">Bem-vindo,</p>
+          <p className="font-display text-lg font-semibold truncate max-w-[220px]">{user?.name}</p>
+        </div>
+        <div className="w-11 h-11 rounded-full bg-[var(--amber)]/15 text-[var(--amber)] flex items-center justify-center">
+          <Icon name="user" size={20}/>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <StatCard label="Itens Ativos" value={totalItems} icon="box" tone="blue" onClick={()=>setRoute("itens")} />
+        <StatCard label="Valor em Estoque" value={formatBRL(totalValue)} icon="chart" tone="green" onClick={()=>setRoute("relatorios")} />
+        <StatCard label="Abaixo do Mínimo" value={lowItems.length} icon="alert" tone="red" onClick={()=>setRoute("minimo")} />
+        <StatCard label="Movimentações Hoje" value={movToday} icon="clipboard" tone="amber" onClick={()=>setRoute("inventario")} />
+      </div>
+
+      <div>
+        <p className="text-xs uppercase tracking-widest text-[var(--dim)] font-semibold mb-2 px-1">Ações Rápidas</p>
+        <div className="grid grid-cols-1 gap-3">
+          <BigButton icon="in" label="Entrada de Material" sub="Registrar recebimento" tone="green" onClick={()=>setRoute("entrada")} />
+          <BigButton icon="out" label="Saída de Material" sub="Registrar retirada" tone="red" onClick={()=>setRoute("saida")} />
+          <div className="grid grid-cols-2 gap-3">
+            <BigButton icon="box" label="Novo Item" tone="amber" onClick={()=>setRoute("itens")} />
+            <BigButton icon="clipboard" label="Inventário" tone="surface" onClick={()=>setRoute("inventario")} />
+          </div>
+        </div>
+      </div>
+
+      {lowItems.length > 0 && (
+        <div className="bg-[var(--red)]/10 border border-[var(--red)]/30 rounded-2xl p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Icon name="alert" size={18} className="text-[var(--red)]"/>
+            <p className="font-display font-semibold uppercase text-sm text-[var(--red)]">Atenção: estoque baixo</p>
+          </div>
+          <p className="text-sm text-[var(--dim)] mb-3">{lowItems.length} item(ns) estão no ou abaixo do estoque mínimo.</p>
+          <button onClick={()=>setRoute("minimo")} className="btn-press w-full rounded-xl py-2.5 bg-[var(--red)] text-white text-sm font-semibold">Ver itens críticos</button>
+        </div>
+      )}
+
+      <div>
+        <p className="text-xs uppercase tracking-widest text-[var(--dim)] font-semibold mb-2 px-1">Últimas Movimentações</p>
+        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl divide-y divide-[var(--border)]">
+          {recent.length === 0 && <p className="text-sm text-[var(--dim)] p-4">Nenhuma movimentação registrada.</p>}
+          {recent.map(m => {
+            const it = itemMap[m.itemId];
+            const t = MOV_TYPES[m.type];
+            return (
+              <div key={m.id} className="flex items-center gap-3 px-4 py-3">
+                <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: t.color+"22", color: t.color }}>
+                  <Icon name={m.type==="saida"?"out":"in"} size={16}/>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium truncate">{it?.name || "Item removido"}</p>
+                  <p className="text-[11px] text-[var(--dim)]">{formatDateTime(m.datetime)} · {m.responsible}</p>
+                </div>
+                <div className="text-sm font-mono font-semibold" style={{ color: t.color }}>
+                  {m.type==="saida" ? "-" : m.type==="ajuste" && m.quantity<0 ? "" : "+"}{m.quantity} {it?.unit}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------- Categorias -------------------------------- */
+
+function CategoriesScreen({ categories, setCategories, items, showToast }){
+  const [modal, setModal] = useState(null); // {mode, data}
+  const [confirm, setConfirm] = useState(null);
+  const [name, setName] = useState("");
+  const [color, setColor] = useState("#F2A93B");
+
+  const openNew = () => { setName(""); setColor("#F2A93B"); setModal({ mode:"new" }); };
+  const openEdit = (c) => { setName(c.name); setColor(c.color||"#F2A93B"); setModal({ mode:"edit", data:c }); };
+
+  const save = () => {
+    if(!name.trim()){ showToast("Informe o nome da categoria.", "error"); return; }
+    if(modal.mode === "new"){
+      setCategories(prev => [...prev, { id: uid("cat"), name: name.trim(), color }]);
+      showToast("Categoria cadastrada com sucesso.", "success");
+    }else{
+      setCategories(prev => prev.map(c => c.id===modal.data.id ? { ...c, name:name.trim(), color } : c));
+      showToast("Categoria atualizada.", "success");
+    }
+    setModal(null);
+  };
+
+  const remove = (c) => {
+    const inUse = items.some(i => i.categoryId === c.id);
+    if(inUse){ showToast("Não é possível excluir: categoria em uso por itens.", "error"); setConfirm(null); return; }
+    setCategories(prev => prev.filter(x=>x.id!==c.id));
+    showToast("Categoria excluída.", "success");
+    setConfirm(null);
+  };
+
+  return (
+    <div className="px-4 py-5 pb-24">
+      <button onClick={openNew} className="btn-press w-full rounded-2xl py-4 bg-[var(--amber)] text-[#1A1305] font-display font-semibold uppercase tracking-wide flex items-center justify-center gap-2 mb-4 shadow-lg">
+        <Icon name="plus" size={20}/> Nova Categoria
+      </button>
+      <div className="space-y-2.5">
+        {categories.map(c => {
+          const count = items.filter(i=>i.categoryId===c.id).length;
+          return (
+            <div key={c.id} className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-3.5 flex items-center gap-3">
+              <div className="w-3 h-10 rounded-full shrink-0" style={{ background: c.color }}></div>
+              <div className="flex-1 min-w-0">
+                <p className="font-medium truncate">{c.name}</p>
+                <p className="text-xs text-[var(--dim)]">{count} item(ns)</p>
+              </div>
+              <button onClick={()=>openEdit(c)} className="w-9 h-9 rounded-lg bg-[var(--surface2)] flex items-center justify-center btn-press"><Icon name="edit" size={16}/></button>
+              <button onClick={()=>setConfirm(c)} className="w-9 h-9 rounded-lg bg-[var(--surface2)] flex items-center justify-center btn-press text-[var(--red)]"><Icon name="trash" size={16}/></button>
+            </div>
+          );
+        })}
+        {categories.length===0 && <p className="text-sm text-[var(--dim)] text-center py-8">Nenhuma categoria cadastrada.</p>}
+      </div>
+
+      {modal && (
+        <Modal title={modal.mode==="new" ? "Nova Categoria" : "Editar Categoria"} onClose={()=>setModal(null)}>
+          <div className="space-y-4">
+            <Field label="Nome" required><input className={inputCls+" rounded-xl"} value={name} onChange={e=>setName(e.target.value)} placeholder="ex: Ferramentas"/></Field>
+            <Field label="Cor de identificação">
+              <div className="flex items-center gap-3">
+                <input type="color" value={color} onChange={e=>setColor(e.target.value)} className="w-14 h-11 rounded-lg bg-transparent border border-[var(--border)]"/>
+                <span className="font-mono text-sm text-[var(--dim)]">{color}</span>
+              </div>
+            </Field>
+            <button onClick={save} className="btn-press w-full rounded-xl py-3.5 bg-[var(--amber)] text-[#1A1305] font-display font-semibold uppercase tracking-wide mt-2">Salvar</button>
+          </div>
+        </Modal>
+      )}
+
+      <ConfirmDialog open={!!confirm} title="Excluir categoria?" message={`Tem certeza que deseja excluir "${confirm?.name}"? Esta ação não pode ser desfeita.`} onConfirm={()=>remove(confirm)} onCancel={()=>setConfirm(null)} />
+    </div>
+  );
+}
+
+/* -------------------------------- Fornecedores -------------------------------- */
+
+function SuppliersScreen({ suppliers, setSuppliers, items, showToast }){
+  const [modal, setModal] = useState(null);
+  const [confirm, setConfirm] = useState(null);
+  const [form, setForm] = useState({ name:"", cnpj:"", phone:"", email:"" });
+
+  const openNew = () => { setForm({ name:"", cnpj:"", phone:"", email:"" }); setModal({ mode:"new" }); };
+  const openEdit = (s) => { setForm({ name:s.name, cnpj:s.cnpj, phone:s.phone, email:s.email }); setModal({ mode:"edit", data:s }); };
+
+  const save = () => {
+    if(!form.name.trim()){ showToast("Informe o nome do fornecedor.", "error"); return; }
+    if(modal.mode==="new"){
+      setSuppliers(prev => [...prev, { id: uid("sup"), ...form, name: form.name.trim() }]);
+      showToast("Fornecedor cadastrado.", "success");
+    }else{
+      setSuppliers(prev => prev.map(s => s.id===modal.data.id ? { ...s, ...form, name: form.name.trim() } : s));
+      showToast("Fornecedor atualizado.", "success");
+    }
+    setModal(null);
+  };
+
+  const remove = (s) => {
+    const inUse = items.some(i => i.supplierId === s.id);
+    if(inUse){ showToast("Não é possível excluir: fornecedor em uso por itens.", "error"); setConfirm(null); return; }
+    setSuppliers(prev => prev.filter(x=>x.id!==s.id));
+    showToast("Fornecedor excluído.", "success");
+    setConfirm(null);
+  };
+
+  return (
+    <div className="px-4 py-5 pb-24">
+      <button onClick={openNew} className="btn-press w-full rounded-2xl py-4 bg-[var(--amber)] text-[#1A1305] font-display font-semibold uppercase tracking-wide flex items-center justify-center gap-2 mb-4 shadow-lg">
+        <Icon name="plus" size={20}/> Novo Fornecedor
+      </button>
+      <div className="space-y-2.5">
+        {suppliers.map(s => (
+          <div key={s.id} className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-3.5">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-lg bg-[var(--blue)]/15 text-[var(--blue)] flex items-center justify-center shrink-0"><Icon name="truck" size={18}/></div>
+              <div className="flex-1 min-w-0">
+                <p className="font-medium truncate">{s.name}</p>
+                <p className="text-xs text-[var(--dim)] font-mono">{s.cnpj}</p>
+                <p className="text-xs text-[var(--dim)]">{s.phone} · {s.email}</p>
+              </div>
+              <div className="flex flex-col gap-2 shrink-0">
+                <button onClick={()=>openEdit(s)} className="w-9 h-9 rounded-lg bg-[var(--surface2)] flex items-center justify-center btn-press"><Icon name="edit" size={16}/></button>
+                <button onClick={()=>setConfirm(s)} className="w-9 h-9 rounded-lg bg-[var(--surface2)] flex items-center justify-center btn-press text-[var(--red)]"><Icon name="trash" size={16}/></button>
+              </div>
+            </div>
+          </div>
+        ))}
+        {suppliers.length===0 && <p className="text-sm text-[var(--dim)] text-center py-8">Nenhum fornecedor cadastrado.</p>}
+      </div>
+
+      {modal && (
+        <Modal title={modal.mode==="new" ? "Novo Fornecedor" : "Editar Fornecedor"} onClose={()=>setModal(null)}>
+          <div className="space-y-4">
+            <Field label="Razão Social" required><input className={inputCls+" rounded-xl"} value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></Field>
+            <Field label="CNPJ"><input className={inputCls+" rounded-xl"} value={form.cnpj} onChange={e=>setForm({...form,cnpj:e.target.value})} placeholder="00.000.000/0000-00"/></Field>
+            <Field label="Telefone"><input className={inputCls+" rounded-xl"} value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})} placeholder="(00) 0000-0000"/></Field>
+            <Field label="E-mail"><input className={inputCls+" rounded-xl"} value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="contato@empresa.com.br"/></Field>
+            <button onClick={save} className="btn-press w-full rounded-xl py-3.5 bg-[var(--amber)] text-[#1A1305] font-display font-semibold uppercase tracking-wide mt-2">Salvar</button>
+          </div>
+        </Modal>
+      )}
+
+      <ConfirmDialog open={!!confirm} title="Excluir fornecedor?" message={`Tem certeza que deseja excluir "${confirm?.name}"?`} onConfirm={()=>remove(confirm)} onCancel={()=>setConfirm(null)} />
+    </div>
+  );
+}
+
+/* ----------------------------------- Itens ----------------------------------- */
+
+const emptyItemForm = {
+  code:"", name:"", description:"", categoryId:"", supplierId:"", unit:"UN",
+  location:"", minStock:0, initialStock:0, cost:0, photo:null, active:true,
+};
+
+function ItemForm({ initial, categories, suppliers, onSave, onCancel, showToast }){
+  const [form, setForm] = useState(initial || emptyItemForm);
+  const [scanning, setScanning] = useState(false);
+  const fileRef = useRef(null);
+
+  const set = (k,v) => setForm(prev => ({ ...prev, [k]: v }));
+
+  const handlePhoto = (e) => {
+    const file = e.target.files?.[0];
+    if(!file) return;
+    if(file.size > 3*1024*1024){ showToast("Imagem muito grande (máx. 3MB).", "error"); return; }
+    const reader = new FileReader();
+    reader.onload = () => set("photo", reader.result);
+    reader.readAsDataURL(file);
+  };
+
+  const generateCode = () => {
+    const rand = Math.floor(Math.random()*9000000000000)+1000000000000;
+    set("code", String(rand));
+  };
+
+  const submit = () => {
+    if(!form.name.trim()) return showToast("Informe o nome do item.", "error");
+    if(!form.categoryId) return showToast("Selecione uma categoria.", "error");
+    if(!form.supplierId) return showToast("Selecione um fornecedor.", "error");
+    if(!form.code.trim()) return showToast("Informe o código de barras/QR.", "error");
+    if(Number(form.minStock) < 0 || Number(form.initialStock) < 0) return showToast("Valores de estoque não podem ser negativos.", "error");
+    onSave({ ...form, minStock:Number(form.minStock), initialStock:Number(form.initialStock), cost:Number(form.cost) });
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col items-center">
+        <div className="w-28 h-28 rounded-2xl bg-[var(--surface2)] border border-dashed border-[var(--border)] flex items-center justify-center overflow-hidden mb-2">
+          {form.photo ? <img src={form.photo} className="w-full h-full object-cover"/> : <Icon name="camera" size={28} className="text-[var(--dim)]"/>}
+        </div>
+        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handlePhoto}/>
+        <button onClick={()=>fileRef.current?.click()} className="text-xs font-semibold text-[var(--amber)] uppercase tracking-wide">
+          {form.photo ? "Trocar foto" : "Adicionar foto"}
+        </button>
+      </div>
+
+      <Field label="Nome do Item" required><input className={inputCls+" rounded-xl"} value={form.name} onChange={e=>set("name",e.target.value)} placeholder="ex: Luva de Raspa"/></Field>
+      <Field label="Descrição"><textarea rows="2" className={inputCls+" rounded-xl resize-none"} value={form.description} onChange={e=>set("description",e.target.value)} placeholder="Detalhes técnicos do item"/></Field>
+
+      <Field label="Código de Barras / QR Code" required hint="Escaneie pela câmera, gere automaticamente ou digite manualmente">
+        <div className="flex gap-2">
+          <input className={inputCls+" rounded-xl font-mono"} value={form.code} onChange={e=>set("code",e.target.value)} placeholder="0000000000000"/>
+          <button onClick={()=>setScanning(true)} className="shrink-0 w-12 rounded-xl bg-[var(--amber)] text-[#1A1305] flex items-center justify-center btn-press"><Icon name="qr" size={18}/></button>
+          <button onClick={generateCode} className="shrink-0 w-12 rounded-xl bg-[var(--surface2)] border border-[var(--border)] flex items-center justify-center btn-press"><Icon name="refresh" size={18}/></button>
+        </div>
+      </Field>
+
+      {scanning && (
+        <ScannerModal
+          showToast={showToast}
+          onClose={()=>setScanning(false)}
+          onDetected={(code)=>{ set("code", code); setScanning(false); showToast("Código lido com sucesso.", "success"); }}
+        />
+      )}
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Categoria" required>
+          <select className={inputCls+" rounded-xl"} value={form.categoryId} onChange={e=>set("categoryId",e.target.value)}>
+            <option value="">Selecione</option>
+            {categories.map(c=> <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </Field>
+        <Field label="Fornecedor" required>
+          <select className={inputCls+" rounded-xl"} value={form.supplierId} onChange={e=>set("supplierId",e.target.value)}>
+            <option value="">Selecione</option>
+            {suppliers.map(s=> <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </Field>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Unidade" required>
+          <select className={inputCls+" rounded-xl"} value={form.unit} onChange={e=>set("unit",e.target.value)}>
+            {UNITS.map(u=> <option key={u} value={u}>{u}</option>)}
+          </select>
+        </Field>
+        <Field label="Localização" hint="Corredor / prateleira">
+          <input className={inputCls+" rounded-xl"} value={form.location} onChange={e=>set("location",e.target.value)} placeholder="ex: A1-03"/>
+        </Field>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Estoque Mínimo" required>
+          <input type="number" min="0" className={inputCls+" rounded-xl"} value={form.minStock} onChange={e=>set("minStock",e.target.value)}/>
+        </Field>
+        <Field label={initial ? "Estoque Inicial (base)" : "Estoque Inicial"} required hint={initial ? "Alterar recalcula o saldo" : ""}>
+          <input type="number" min="0" className={inputCls+" rounded-xl"} value={form.initialStock} onChange={e=>set("initialStock",e.target.value)}/>
+        </Field>
+      </div>
+
+      <Field label="Custo Unitário (R$)" required>
+        <input type="number" min="0" step="0.01" className={inputCls+" rounded-xl"} value={form.cost} onChange={e=>set("cost",e.target.value)}/>
+      </Field>
+
+      <label className="flex items-center gap-3 bg-[var(--surface2)] rounded-xl px-3.5 py-3 cursor-pointer">
+        <input type="checkbox" checked={form.active} onChange={e=>set("active", e.target.checked)} className="w-5 h-5 accent-[var(--amber)]"/>
+        <span className="text-sm font-medium">Item ativo</span>
+      </label>
+
+      <div className="flex gap-3 pt-1">
+        <button onClick={onCancel} className="btn-press flex-1 rounded-xl py-3.5 bg-[var(--surface2)] border border-[var(--border)] font-semibold">Cancelar</button>
+        <button onClick={submit} className="btn-press flex-1 rounded-xl py-3.5 bg-[var(--amber)] text-[#1A1305] font-display font-semibold uppercase tracking-wide">Salvar Item</button>
+      </div>
+    </div>
+  );
+}
+
+function BarcodeQr({ code }){
+  const barcodeRef = useRef(null);
+  const qrRef = useRef(null);
+  useEffect(() => {
+    if(barcodeRef.current && window.JsBarcode && code){
+      try{
+        window.JsBarcode(barcodeRef.current, code, { format:"CODE128", background:"transparent", lineColor:"#EAF0F5", width:1.6, height:46, displayValue:false, margin:0 });
+      }catch(e){}
+    }
+    if(qrRef.current && window.QRCode && code){
+      qrRef.current.innerHTML = "";
+      try{ new window.QRCode(qrRef.current, { text: code, width:88, height:88, colorDark:"#0B1015", colorLight:"#EAF0F5" }); }catch(e){}
+    }
+  }, [code]);
+  return (
+    <div className="flex items-center gap-4 bg-[var(--surface2)] rounded-xl p-3.5">
+      <div className="bg-[var(--text)]/[0.03] rounded-lg p-2 flex-1 overflow-hidden">
+        <svg ref={barcodeRef} className="w-full"></svg>
+        <p className="text-center font-mono text-xs text-[var(--dim)] tracking-widest mt-1">{code}</p>
+      </div>
+      <div ref={qrRef} className="rounded-lg overflow-hidden bg-white p-1.5 shrink-0"></div>
+    </div>
+  );
+}
+
+function ItemDetail({ item, categories, suppliers, movements, onClose, onEdit, onDelete }){
+  const cat = categories.find(c=>c.id===item.categoryId);
+  const sup = suppliers.find(s=>s.id===item.supplierId);
+  const stock = computeStock(item, movements);
+  const low = stock <= item.minStock;
+  const itemMovs = movements.filter(m=>m.itemId===item.id).sort((a,b)=> new Date(b.datetime)-new Date(a.datetime));
+
+  return (
+    <Modal title="Detalhes do Item" onClose={onClose} wide>
+      <div className="space-y-4">
+        <div className="flex gap-4 items-start">
+          <div className="w-24 h-24 rounded-xl bg-[var(--surface2)] overflow-hidden shrink-0 flex items-center justify-center">
+            {item.photo ? <img src={item.photo} className="w-full h-full object-cover"/> : <Icon name="box" size={30} className="text-[var(--dim)]"/>}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="font-display font-semibold text-lg leading-tight">{item.name}</p>
+            <p className="text-xs text-[var(--dim)] mt-1">{item.description || "Sem descrição"}</p>
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {cat && <Badge tone="blue">{cat.name}</Badge>}
+              <Badge tone={item.active ? "green":"dim"}>{item.active ? "Ativo":"Inativo"}</Badge>
+              {low && <Badge tone="red">Estoque Baixo</Badge>}
+            </div>
+          </div>
+        </div>
+
+        <BarcodeQr code={item.code} />
+
+        <div className="grid grid-cols-3 gap-2.5">
+          <div className="bg-[var(--surface2)] rounded-xl p-3 text-center">
+            <p className="font-display text-xl font-bold" style={{ color: low ? "var(--red)" : "var(--text)" }}>{stock}</p>
+            <p className="text-[10px] text-[var(--dim)] uppercase mt-0.5">Estoque Atual</p>
+          </div>
+          <div className="bg-[var(--surface2)] rounded-xl p-3 text-center">
+            <p className="font-display text-xl font-bold">{item.minStock}</p>
+            <p className="text-[10px] text-[var(--dim)] uppercase mt-0.5">Mínimo</p>
+          </div>
+          <div className="bg-[var(--surface2)] rounded-xl p-3 text-center">
+            <p className="font-display text-xl font-bold">{formatBRL(stock*item.cost)}</p>
+            <p className="text-[10px] text-[var(--dim)] uppercase mt-0.5">Valor Total</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2.5 text-sm">
+          <div className="bg-[var(--surface2)] rounded-xl p-3">
+            <p className="text-[10px] text-[var(--dim)] uppercase">Localização</p>
+            <p className="font-mono font-semibold">{item.location || "-"}</p>
+          </div>
+          <div className="bg-[var(--surface2)] rounded-xl p-3">
+            <p className="text-[10px] text-[var(--dim)] uppercase">Unidade</p>
+            <p className="font-semibold">{item.unit}</p>
+          </div>
+          <div className="bg-[var(--surface2)] rounded-xl p-3">
+            <p className="text-[10px] text-[var(--dim)] uppercase">Fornecedor</p>
+            <p className="font-semibold truncate">{sup?.name || "-"}</p>
+          </div>
+          <div className="bg-[var(--surface2)] rounded-xl p-3">
+            <p className="text-[10px] text-[var(--dim)] uppercase">Custo Unitário</p>
+            <p className="font-semibold">{formatBRL(item.cost)}</p>
+          </div>
+        </div>
+
+        <div>
+          <p className="text-xs uppercase tracking-widest text-[var(--dim)] font-semibold mb-2">Histórico de Movimentações</p>
+          <div className="max-h-52 overflow-y-auto space-y-1.5 pr-1">
+            {itemMovs.length===0 && <p className="text-sm text-[var(--dim)]">Nenhuma movimentação registrada.</p>}
+            {itemMovs.map(m => {
+              const t = MOV_TYPES[m.type];
+              return (
+                <div key={m.id} className="flex items-center gap-2.5 bg-[var(--surface2)] rounded-lg px-3 py-2">
+                  <span className="text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full" style={{ background: t.color+"22", color: t.color }}>{t.label}</span>
+                  <span className="text-xs text-[var(--dim)] flex-1 truncate">{formatDateTime(m.datetime)}</span>
+                  <span className="font-mono text-sm font-semibold" style={{ color: t.color }}>{m.type==="ajuste" ? (m.quantity>0?"+":"") : m.type==="saida" ? "-" : "+"}{m.quantity}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="flex gap-3 pt-1">
+          <button onClick={onDelete} className="btn-press flex-1 rounded-xl py-3.5 bg-[var(--red)]/15 text-[var(--red)] border border-[var(--red)]/30 font-semibold flex items-center justify-center gap-2"><Icon name="trash" size={17}/> Excluir</button>
+          <button onClick={onEdit} className="btn-press flex-1 rounded-xl py-3.5 bg-[var(--amber)] text-[#1A1305] font-display font-semibold uppercase tracking-wide flex items-center justify-center gap-2"><Icon name="edit" size={17}/> Editar</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function ItemsScreen({ items, setItems, categories, suppliers, movements, showToast }){
+  const [search, setSearch] = useState("");
+  const [catFilter, setCatFilter] = useState("");
+  const [formModal, setFormModal] = useState(null); // {mode:'new'|'edit', data}
+  const [detail, setDetail] = useState(null);
+  const [confirm, setConfirm] = useState(null);
+  const [scanning, setScanning] = useState(false);
+
+  const filtered = items.filter(i => {
+    const matchesSearch = !search || i.name.toLowerCase().includes(search.toLowerCase()) || i.code.includes(search) || i.location.toLowerCase().includes(search.toLowerCase());
+    const matchesCat = !catFilter || i.categoryId === catFilter;
+    return matchesSearch && matchesCat;
+  });
+
+  const save = (data) => {
+    if(formModal.mode === "new"){
+      setItems(prev => [...prev, { id: uid("item"), ...data }]);
+      showToast("Item cadastrado com sucesso.", "success");
+    }else{
+      setItems(prev => prev.map(i => i.id===formModal.data.id ? { ...i, ...data } : i));
+      showToast("Item atualizado.", "success");
+      setDetail(prev => prev ? { ...prev, ...data } : prev);
+    }
+    setFormModal(null);
+  };
+
+  const remove = (item) => {
+    setItems(prev => prev.filter(i=>i.id!==item.id));
+    showToast("Item excluído.", "success");
+    setConfirm(null);
+    setDetail(null);
+  };
+
+  return (
+    <div className="px-4 py-5 pb-24">
+      <button onClick={()=>setFormModal({ mode:"new" })} className="btn-press w-full rounded-2xl py-4 bg-[var(--amber)] text-[#1A1305] font-display font-semibold uppercase tracking-wide flex items-center justify-center gap-2 mb-4 shadow-lg">
+        <Icon name="plus" size={20}/> Novo Item
+      </button>
+
+      <div className="flex gap-2 mb-3">
+        <div className="relative flex-1">
+          <Icon name="search" size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--dim)]"/>
+          <input className={inputCls+" rounded-xl pl-10"} placeholder="Buscar por nome, código ou local..." value={search} onChange={e=>setSearch(e.target.value)}/>
+        </div>
+        <button onClick={()=>setScanning(true)} className="shrink-0 w-12 rounded-xl bg-[var(--amber)] text-[#1A1305] flex items-center justify-center btn-press"><Icon name="qr" size={18}/></button>
+      </div>
+
+      {scanning && (
+        <ScannerModal
+          showToast={showToast}
+          onClose={()=>setScanning(false)}
+          onDetected={(code)=>{
+            setScanning(false);
+            const found = items.find(i => i.code === code);
+            if(found){ setSearch(""); setDetail(found); showToast(`Item localizado: ${found.name}`, "success"); }
+            else { setSearch(code); showToast("Nenhum item cadastrado com esse código.", "error"); }
+          }}
+        />
+      )}
+
+      <div className="flex gap-2 overflow-x-auto scrollbar-none pb-1 mb-4 -mx-4 px-4">
+        <button onClick={()=>setCatFilter("")} className={`shrink-0 px-3.5 py-2 rounded-full text-xs font-semibold border ${!catFilter ? "bg-[var(--amber)] text-[#1A1305] border-[var(--amber)]":"bg-[var(--surface2)] border-[var(--border)] text-[var(--dim)]"}`}>Todas</button>
+        {categories.map(c => (
+          <button key={c.id} onClick={()=>setCatFilter(c.id)} className={`shrink-0 px-3.5 py-2 rounded-full text-xs font-semibold border ${catFilter===c.id ? "bg-[var(--amber)] text-[#1A1305] border-[var(--amber)]":"bg-[var(--surface2)] border-[var(--border)] text-[var(--dim)]"}`}>{c.name}</button>
+        ))}
+      </div>
+
+      <div className="space-y-2.5">
+        {filtered.map(item => {
+          const stock = computeStock(item, movements);
+          const low = stock <= item.minStock;
+          const cat = categories.find(c=>c.id===item.categoryId);
+          return (
+            <button key={item.id} onClick={()=>setDetail(item)} className="btn-press w-full text-left bg-[var(--surface)] border border-[var(--border)] rounded-xl p-3.5 flex items-center gap-3">
+              <div className="w-14 h-14 rounded-lg bg-[var(--surface2)] overflow-hidden shrink-0 flex items-center justify-center">
+                {item.photo ? <img src={item.photo} className="w-full h-full object-cover"/> : <Icon name="box" size={22} className="text-[var(--dim)]"/>}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="font-medium truncate">{item.name}</p>
+                <p className="text-[11px] text-[var(--dim)] font-mono">{item.code}</p>
+                <div className="flex items-center gap-1.5 mt-1">
+                  {cat && <span className="w-2 h-2 rounded-full" style={{ background:cat.color }}></span>}
+                  <span className="text-[11px] text-[var(--dim)] truncate">{cat?.name} · {item.location}</span>
+                </div>
+              </div>
+              <div className="text-right shrink-0">
+                <p className="font-display font-bold text-lg" style={{ color: low ? "var(--red)" : "var(--text)" }}>{stock}</p>
+                <p className="text-[10px] text-[var(--dim)] uppercase">{item.unit}</p>
+                {!item.active && <Badge>Inativo</Badge>}
+              </div>
+            </button>
+          );
+        })}
+        {filtered.length===0 && <p className="text-sm text-[var(--dim)] text-center py-10">Nenhum item encontrado.</p>}
+      </div>
+
+      {formModal && (
+        <Modal title={formModal.mode==="new" ? "Novo Item" : "Editar Item"} onClose={()=>setFormModal(null)} wide>
+          <ItemForm
+            initial={formModal.mode==="edit" ? formModal.data : null}
+            categories={categories} suppliers={suppliers}
+            onSave={save} onCancel={()=>setFormModal(null)} showToast={showToast}
+          />
+        </Modal>
+      )}
+
+      {detail && (
+        <ItemDetail
+          item={items.find(i=>i.id===detail.id) || detail}
+          categories={categories} suppliers={suppliers} movements={movements}
+          onClose={()=>setDetail(null)}
+          onEdit={()=>{ setFormModal({ mode:"edit", data: detail }); setDetail(null); }}
+          onDelete={()=>setConfirm(detail)}
+        />
+      )}
+
+      <ConfirmDialog open={!!confirm} title="Excluir item?" message={`Tem certeza que deseja excluir "${confirm?.name}"? Todo o histórico de movimentações associado permanecerá registrado.`} onConfirm={()=>remove(confirm)} onCancel={()=>setConfirm(null)} />
+    </div>
+  );
+}
+
+/* ----------------------------- Entrada / Saída ----------------------------- */
+
+function MovementScreen({ type, items, movements, setMovements, user, showToast }){
+  const t = MOV_TYPES[type];
+  const [itemId, setItemId] = useState("");
+  const [quantity, setQuantity] = useState("");
+  const [datetime, setDatetime] = useState(toDatetimeLocal());
+  const [requester, setRequester] = useState("");
+  const [os, setOs] = useState("");
+  const [costCenter, setCostCenter] = useState("");
+  const [note, setNote] = useState("");
+  const [search, setSearch] = useState("");
+  const [scanning, setScanning] = useState(false);
+
+  const selected = items.find(i=>i.id===itemId);
+  const stock = selected ? computeStock(selected, movements) : 0;
+
+  const filteredItems = items.filter(i => i.active && (!search || i.name.toLowerCase().includes(search.toLowerCase()) || i.code.includes(search)));
+
+  const reset = () => { setItemId(""); setQuantity(""); setRequester(""); setOs(""); setCostCenter(""); setNote(""); setDatetime(toDatetimeLocal()); setSearch(""); };
+
+  const submit = () => {
+    if(!selected) return showToast("Selecione um item.", "error");
+    const qty = Number(quantity);
+    if(!qty || qty <= 0) return showToast("Informe uma quantidade válida.", "error");
+    if(type === "saida" && qty > stock){
+      return showToast(`Saída bloqueada: quantidade (${qty}) maior que o estoque disponível (${stock}).`, "error");
+    }
+    if(!user) return showToast("Sessão inválida.", "error");
+
+    const mov = {
+      id: uid("mov"), itemId: selected.id, type: type, quantity: qty,
+      datetime: new Date(datetime).toISOString(), responsible: user.name,
+      requester: requester || "-", os: os || "-", costCenter: costCenter || "-", note,
+    };
+    setMovements(prev => [...prev, mov]);
+    showToast(`${t.label} registrada com sucesso.`, "success");
+    reset();
+  };
+
+  return (
+    <div className="px-4 py-5 pb-24 space-y-4">
+      <div className="rounded-2xl p-4 flex items-center gap-3" style={{ background: t.color+"14", border:`1px solid ${t.color}44` }}>
+        <div className="w-11 h-11 rounded-xl flex items-center justify-center" style={{ background: t.color+"26", color: t.color }}>
+          <Icon name={type==="saida"?"out":"in"} size={22}/>
+        </div>
+        <div>
+          <p className="font-display font-semibold uppercase tracking-wide" style={{ color: t.color }}>{t.label} de Material</p>
+          <p className="text-xs text-[var(--dim)]">Responsável: {user?.name}</p>
+        </div>
+      </div>
+
+      <Field label="Buscar Item" required>
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Icon name="search" size={17} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--dim)]"/>
+            <input className={inputCls+" rounded-xl pl-10"} placeholder="Nome ou código..." value={search} onChange={e=>{ setSearch(e.target.value); setItemId(""); }}/>
+          </div>
+          <button onClick={()=>setScanning(true)} className="shrink-0 w-12 rounded-xl flex items-center justify-center btn-press" style={{ background:t.color, color: type==="entrada"||type==="devolucao" ? "#08210F" : "white" }}>
+            <Icon name="qr" size={18}/>
+          </button>
+        </div>
+      </Field>
+
+      {scanning && (
+        <ScannerModal
+          showToast={showToast}
+          onClose={()=>setScanning(false)}
+          onDetected={(code)=>{
+            setScanning(false);
+            const found = items.find(i => i.code === code || i.code.includes(code) || code.includes(i.code));
+            if(found){ setItemId(found.id); setSearch(""); showToast(`Item localizado: ${found.name}`, "success"); }
+            else { setSearch(code); showToast("Código lido, mas nenhum item cadastrado corresponde a ele.", "error"); }
+          }}
+        />
+      )}
+
+      {search && !selected && (
+        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl max-h-52 overflow-y-auto divide-y divide-[var(--border)]">
+          {filteredItems.slice(0,20).map(i => (
+            <button key={i.id} onClick={()=>{ setItemId(i.id); setSearch(""); }} className="w-full text-left px-3.5 py-2.5 flex items-center justify-between btn-press">
+              <div className="min-w-0">
+                <p className="text-sm font-medium truncate">{i.name}</p>
+                <p className="text-[11px] text-[var(--dim)] font-mono">{i.code}</p>
+              </div>
+              <span className="text-xs text-[var(--dim)] shrink-0 ml-2">{computeStock(i,movements)} {i.unit}</span>
+            </button>
+          ))}
+          {filteredItems.length===0 && <p className="text-sm text-[var(--dim)] p-3.5">Nenhum item encontrado.</p>}
+        </div>
+      )}
+
+      {selected && (
+        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-3.5 flex items-center gap-3">
+          <div className="w-12 h-12 rounded-lg bg-[var(--surface2)] overflow-hidden shrink-0 flex items-center justify-center">
+            {selected.photo ? <img src={selected.photo} className="w-full h-full object-cover"/> : <Icon name="box" size={18} className="text-[var(--dim)]"/>}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-medium truncate">{selected.name}</p>
+            <p className="text-xs text-[var(--dim)]">Estoque atual: <span className="font-mono font-semibold" style={{color: stock<=selected.minStock ? "var(--red)":"var(--text)"}}>{stock} {selected.unit}</span></p>
+          </div>
+          <button onClick={()=>{ setItemId(""); }} className="w-8 h-8 rounded-lg bg-[var(--surface2)] flex items-center justify-center btn-press shrink-0"><Icon name="close" size={15}/></button>
+        </div>
+      )}
+
+      <Field label={`Quantidade (${selected?.unit||"UN"})`} required>
+        <input type="number" min="1" className={inputCls+" rounded-xl text-lg font-mono"} value={quantity} onChange={e=>setQuantity(e.target.value)} placeholder="0"/>
+        {type==="saida" && selected && Number(quantity) > stock && (
+          <p className="text-xs text-[var(--red)] mt-1.5 flex items-center gap-1"><Icon name="alert" size={13}/> Quantidade maior que o estoque disponível ({stock}).</p>
+        )}
+      </Field>
+
+      <Field label="Data e Hora" required>
+        <input type="datetime-local" className={inputCls+" rounded-xl"} value={datetime} onChange={e=>setDatetime(e.target.value)}/>
+      </Field>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Solicitante"><input className={inputCls+" rounded-xl"} value={requester} onChange={e=>setRequester(e.target.value)} placeholder="Nome / setor"/></Field>
+        <Field label="OS"><input className={inputCls+" rounded-xl"} value={os} onChange={e=>setOs(e.target.value)} placeholder="Nº da OS"/></Field>
+      </div>
+
+      <Field label="Centro de Custo"><input className={inputCls+" rounded-xl"} value={costCenter} onChange={e=>setCostCenter(e.target.value)} placeholder="ex: CC-102 Manutenção"/></Field>
+      <Field label="Observação"><textarea rows="2" className={inputCls+" rounded-xl resize-none"} value={note} onChange={e=>setNote(e.target.value)} placeholder="Informações adicionais"/></Field>
+
+      <button onClick={submit} className="btn-press w-full rounded-2xl py-4 font-display font-semibold uppercase tracking-wide shadow-lg" style={{ background:t.color, color: type==="entrada"||type==="devolucao" ? "#08210F" : "white" }}>
+        Confirmar {t.label}
+      </button>
+
+      <RecentMovementsList movements={movements} items={items} type={type} />
+    </div>
+  );
+}
+
+function RecentMovementsList({ movements, items, type }){
+  const list = movements.filter(m=>m.type===type).sort((a,b)=> new Date(b.datetime)-new Date(a.datetime)).slice(0,10);
+  const itemMap = Object.fromEntries(items.map(i=>[i.id,i]));
+  const t = MOV_TYPES[type];
+  return (
+    <div>
+      <p className="text-xs uppercase tracking-widest text-[var(--dim)] font-semibold mb-2 px-1">Últimos Registros</p>
+      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl divide-y divide-[var(--border)]">
+        {list.length===0 && <p className="text-sm text-[var(--dim)] p-4">Nenhum registro ainda.</p>}
+        {list.map(m => {
+          const it = itemMap[m.itemId];
+          return (
+            <div key={m.id} className="px-4 py-3">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium truncate">{it?.name || "Item removido"}</p>
+                <span className="font-mono text-sm font-semibold" style={{color:t.color}}>{m.quantity} {it?.unit}</span>
+              </div>
+              <p className="text-[11px] text-[var(--dim)] mt-0.5">{formatDateTime(m.datetime)} · {m.responsible} {m.os!=="-" && `· ${m.os}`}</p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------- Inventário -------------------------------- */
+
+function InventoryScreen({ items, categories, movements, setMovements, user, showToast }){
+  const [search, setSearch] = useState("");
+  const [catFilter, setCatFilter] = useState("");
+  const [adjustItem, setAdjustItem] = useState(null);
+  const [countValue, setCountValue] = useState("");
+
+  const filtered = items.filter(i => i.active && (!search || i.name.toLowerCase().includes(search.toLowerCase()) || i.code.includes(search)) && (!catFilter || i.categoryId===catFilter));
+
+  const openAdjust = (item) => { setAdjustItem(item); setCountValue(String(computeStock(item, movements))); };
+
+  const applyAdjust = () => {
+    const counted = Number(countValue);
+    if(isNaN(counted) || counted < 0) return showToast("Informe uma contagem válida.", "error");
+    const current = computeStock(adjustItem, movements);
+    const diff = counted - current;
+    if(diff === 0){ showToast("Nenhuma diferença encontrada."); setAdjustItem(null); return; }
+    const mov = {
+      id: uid("mov"), itemId: adjustItem.id, type: "ajuste", quantity: diff,
+      datetime: nowISO(), responsible: user.name, requester: "-", os: "-",
+      costCenter: "-", note: `Ajuste de inventário: contagem física = ${counted}`,
+    };
+    setMovements(prev => [...prev, mov]);
+    showToast(`Ajuste registrado: ${diff>0?"+":""}${diff} ${adjustItem.unit}.`, "success");
+    setAdjustItem(null);
+  };
+
+  const totalCounted = filtered.length;
+
+  return (
+    <div className="px-4 py-5 pb-24">
+      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4 mb-4 flex items-center gap-3">
+        <Icon name="clipboard" size={22} className="text-[var(--amber)]"/>
+        <div>
+          <p className="font-display font-semibold uppercase">Contagem de Inventário</p>
+          <p className="text-xs text-[var(--dim)]">{totalCounted} itens listados · toque em um item para ajustar o saldo</p>
+        </div>
+      </div>
+
+      <div className="relative mb-3">
+        <Icon name="search" size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--dim)]"/>
+        <input className={inputCls+" rounded-xl pl-10"} placeholder="Buscar item..." value={search} onChange={e=>setSearch(e.target.value)}/>
+      </div>
+      <div className="flex gap-2 overflow-x-auto scrollbar-none pb-1 mb-4 -mx-4 px-4">
+        <button onClick={()=>setCatFilter("")} className={`shrink-0 px-3.5 py-2 rounded-full text-xs font-semibold border ${!catFilter ? "bg-[var(--amber)] text-[#1A1305] border-[var(--amber)]":"bg-[var(--surface2)] border-[var(--border)] text-[var(--dim)]"}`}>Todas</button>
+        {categories.map(c => (
+          <button key={c.id} onClick={()=>setCatFilter(c.id)} className={`shrink-0 px-3.5 py-2 rounded-full text-xs font-semibold border ${catFilter===c.id ? "bg-[var(--amber)] text-[#1A1305] border-[var(--amber)]":"bg-[var(--surface2)] border-[var(--border)] text-[var(--dim)]"}`}>{c.name}</button>
+        ))}
+      </div>
+
+      <div className="space-y-2">
+        {filtered.map(item => {
+          const stock = computeStock(item, movements);
+          const low = stock <= item.minStock;
+          return (
+            <button key={item.id} onClick={()=>openAdjust(item)} className="btn-press w-full text-left bg-[var(--surface)] border border-[var(--border)] rounded-xl p-3.5 flex items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <p className="font-medium truncate">{item.name}</p>
+                <p className="text-[11px] text-[var(--dim)] font-mono">{item.code} · {item.location}</p>
+              </div>
+              <div className="text-right shrink-0">
+                <p className="font-display font-bold text-lg" style={{ color: low ? "var(--red)":"var(--text)" }}>{stock}</p>
+                <p className="text-[10px] text-[var(--dim)] uppercase">{item.unit}</p>
+              </div>
+              <Icon name="edit" size={16} className="text-[var(--dim)]"/>
+            </button>
+          );
+        })}
+      </div>
+
+      {adjustItem && (
+        <Modal title="Ajuste de Inventário" onClose={()=>setAdjustItem(null)}>
+          <div className="space-y-4">
+            <div className="bg-[var(--surface2)] rounded-xl p-3.5">
+              <p className="font-medium">{adjustItem.name}</p>
+              <p className="text-xs text-[var(--dim)] font-mono mt-0.5">{adjustItem.code}</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-[var(--surface2)] rounded-xl p-3 text-center">
+                <p className="font-display text-xl font-bold">{computeStock(adjustItem, movements)}</p>
+                <p className="text-[10px] text-[var(--dim)] uppercase mt-0.5">Estoque no Sistema</p>
+              </div>
+              <Field label="Contagem Física" required>
+                <input type="number" min="0" autoFocus className={inputCls+" rounded-xl text-center font-mono text-lg"} value={countValue} onChange={e=>setCountValue(e.target.value)}/>
+              </Field>
+            </div>
+            <button onClick={applyAdjust} className="btn-press w-full rounded-xl py-3.5 bg-[var(--amber)] text-[#1A1305] font-display font-semibold uppercase tracking-wide">Registrar Ajuste</button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* -------------------------------- Relatórios -------------------------------- */
+
+function ReportsScreen({ items, categories, suppliers, movements, showToast }){
+  const rows = items.map(i => ({
+    item: i, stock: computeStock(i, movements), total: computeStock(i, movements) * Number(i.cost||0),
+  }));
+  const totalValue = rows.reduce((a,r)=>a+r.total,0);
+  const totalUnits = rows.reduce((a,r)=>a+r.stock,0);
+
+  const byCategory = categories.map(c => {
+    const rs = rows.filter(r=>r.item.categoryId===c.id);
+    return { category:c, count: rs.length, value: rs.reduce((a,r)=>a+r.total,0) };
+  }).filter(c=>c.count>0);
+
+  const exportCSV = () => {
+    const header = ["Codigo","Nome","Categoria","Fornecedor","Unidade","Localizacao","EstoqueAtual","EstoqueMinimo","CustoUnitario","ValorTotal"];
+    const lines = rows.map(r => [
+      r.item.code, `"${r.item.name.replace(/"/g,'""')}"`,
+      categories.find(c=>c.id===r.item.categoryId)?.name || "",
+      suppliers.find(s=>s.id===r.item.supplierId)?.name || "",
+      r.item.unit, r.item.location, r.stock, r.item.minStock,
+      r.item.cost.toFixed(2), r.total.toFixed(2),
+    ].join(";"));
+    const csv = [header.join(";"), ...lines].join("\n");
+    const blob = new Blob(["\uFEFF"+csv], { type:"text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `relatorio-estoque-${new Date().toISOString().slice(0,10)}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+    showToast("Relatório exportado em CSV.", "success");
+  };
+
+  return (
+    <div className="px-4 py-5 pb-24 space-y-4">
+      <div className="grid grid-cols-2 gap-3">
+        <StatCard label="Valor Total em Estoque" value={formatBRL(totalValue)} icon="chart" tone="green"/>
+        <StatCard label="Unidades Totais" value={totalUnits} icon="box" tone="blue"/>
+      </div>
+
+      <button onClick={exportCSV} className="btn-press w-full rounded-2xl py-4 bg-[var(--amber)] text-[#1A1305] font-display font-semibold uppercase tracking-wide flex items-center justify-center gap-2 shadow-lg">
+        <Icon name="download" size={19}/> Exportar Relatório (CSV)
+      </button>
+
+      <div>
+        <p className="text-xs uppercase tracking-widest text-[var(--dim)] font-semibold mb-2 px-1">Valor por Categoria</p>
+        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl divide-y divide-[var(--border)]">
+          {byCategory.map(c => (
+            <div key={c.category.id} className="flex items-center gap-3 px-4 py-3">
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background:c.category.color }}></span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{c.category.name}</p>
+                <p className="text-[11px] text-[var(--dim)]">{c.count} item(ns)</p>
+              </div>
+              <p className="font-mono font-semibold text-sm">{formatBRL(c.value)}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <p className="text-xs uppercase tracking-widest text-[var(--dim)] font-semibold mb-2 px-1">Estoque Detalhado</p>
+        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl divide-y divide-[var(--border)]">
+          {rows.map(r => (
+            <div key={r.item.id} className="flex items-center gap-3 px-4 py-3">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{r.item.name}</p>
+                <p className="text-[11px] text-[var(--dim)] font-mono">{r.item.code}</p>
+              </div>
+              <div className="text-right shrink-0">
+                <p className="font-mono text-sm font-semibold">{r.stock} {r.item.unit}</p>
+                <p className="text-[11px] text-[var(--dim)]">{formatBRL(r.total)}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* --------------------------- Abaixo do Mínimo --------------------------- */
+
+function LowStockScreen({ items, categories, suppliers, movements, setRoute }){
+  const rows = items.filter(i=>i.active).map(i => ({ item:i, stock: computeStock(i, movements) })).filter(r=>r.stock <= r.item.minStock);
+  rows.sort((a,b) => (a.stock/Math.max(a.item.minStock,1)) - (b.stock/Math.max(b.item.minStock,1)));
+
+  return (
+    <div className="px-4 py-5 pb-24 space-y-4">
+      <div className="bg-[var(--red)]/10 border border-[var(--red)]/30 rounded-2xl p-4 flex items-center gap-3">
+        <Icon name="alert" size={24} className="text-[var(--red)]"/>
+        <div>
+          <p className="font-display font-semibold uppercase text-[var(--red)]">{rows.length} Item(ns) Crítico(s)</p>
+          <p className="text-xs text-[var(--dim)]">Estoque no ou abaixo do nível mínimo definido</p>
+        </div>
+      </div>
+
+      <div className="space-y-2.5">
+        {rows.map(({ item, stock }) => {
+          const cat = categories.find(c=>c.id===item.categoryId);
+          const sup = suppliers.find(s=>s.id===item.supplierId);
+          const pct = item.minStock > 0 ? Math.min(100, Math.round((stock/item.minStock)*100)) : 0;
+          const zero = stock <= 0;
+          return (
+            <div key={item.id} className="bg-[var(--surface)] border border-[var(--red)]/30 rounded-xl p-3.5">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-lg bg-[var(--surface2)] overflow-hidden shrink-0 flex items-center justify-center">
+                  {item.photo ? <img src={item.photo} className="w-full h-full object-cover"/> : <Icon name="box" size={18} className="text-[var(--dim)]"/>}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium truncate">{item.name}</p>
+                  <p className="text-[11px] text-[var(--dim)] truncate">{cat?.name} · {sup?.name}</p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="font-display font-bold text-lg text-[var(--red)]">{stock}<span className="text-xs text-[var(--dim)] font-normal">/{item.minStock}</span></p>
+                  <Badge tone={zero ? "red":"amber"}>{zero ? "Esgotado":"Crítico"}</Badge>
+                </div>
+              </div>
+              <div className="mt-2.5 h-1.5 rounded-full bg-[var(--surface2)] overflow-hidden">
+                <div className="h-full bg-[var(--red)] rounded-full" style={{ width: `${pct}%` }}></div>
+              </div>
+            </div>
+          );
+        })}
+        {rows.length===0 && (
+          <div className="text-center py-14">
+            <Icon name="check" size={36} className="text-[var(--green)] mx-auto mb-3"/>
+            <p className="text-sm text-[var(--dim)]">Todos os itens estão dentro do nível mínimo de estoque.</p>
+          </div>
+        )}
+      </div>
+
+      {rows.length>0 && (
+        <button onClick={()=>setRoute("entrada")} className="btn-press w-full rounded-2xl py-4 bg-[var(--amber)] text-[#1A1305] font-display font-semibold uppercase tracking-wide flex items-center justify-center gap-2 shadow-lg">
+          <Icon name="in" size={20}/> Registrar Entrada
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ----------------------------------- App ----------------------------------- */
+
+const ROUTE_TITLES = {
+  dashboard: "Dashboard", itens: "Itens", categorias: "Categorias", fornecedores: "Fornecedores",
+  entrada: "Entrada de Material", saida: "Saída de Material", inventario: "Inventário",
+  relatorios: "Relatório de Estoque", minimo: "Abaixo do Mínimo",
+};
+
+function App(){
+  const [db, setDb] = useState(() => loadDB());
+  const [user, setUser] = useState(() => {
+    try{ const raw = sessionStorage.getItem(SESSION_KEY); return raw ? JSON.parse(raw) : null; }catch(e){ return null; }
+  });
+  const [route, setRoute] = useState("dashboard");
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [toast, showToast] = useToast();
+
+  useEffect(() => { persistDB(db); }, [db]);
+
+  const setItems = (updater) => setDb(prev => ({ ...prev, items: typeof updater==="function" ? updater(prev.items) : updater }));
+  const setCategories = (updater) => setDb(prev => ({ ...prev, categories: typeof updater==="function" ? updater(prev.categories) : updater }));
+  const setSuppliers = (updater) => setDb(prev => ({ ...prev, suppliers: typeof updater==="function" ? updater(prev.suppliers) : updater }));
+  const setMovements = (updater) => setDb(prev => ({ ...prev, movements: typeof updater==="function" ? updater(prev.movements) : updater }));
+
+  const handleLogin = (u) => {
+    setUser(u);
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(u));
+    setRoute("dashboard");
+  };
+  const handleLogout = () => {
+    setUser(null);
+    sessionStorage.removeItem(SESSION_KEY);
+    setDrawerOpen(false);
+  };
+
+  const lowCount = useMemo(() => db.items.filter(i=>i.active && computeStock(i, db.movements) <= i.minStock).length, [db.items, db.movements]);
+
+  if(!user){
+    return (
+      <>
+        <LoginScreen users={db.users} onLogin={handleLogin} />
+        <Toast toast={toast}/>
+      </>
+    );
+  }
+
+  let screen;
+  switch(route){
+    case "itens": screen = <ItemsScreen items={db.items} setItems={setItems} categories={db.categories} suppliers={db.suppliers} movements={db.movements} showToast={showToast}/>; break;
+    case "categorias": screen = <CategoriesScreen categories={db.categories} setCategories={setCategories} items={db.items} showToast={showToast}/>; break;
+    case "fornecedores": screen = <SuppliersScreen suppliers={db.suppliers} setSuppliers={setSuppliers} items={db.items} showToast={showToast}/>; break;
+    case "entrada": screen = <MovementScreen type="entrada" items={db.items} movements={db.movements} setMovements={setMovements} user={user} showToast={showToast}/>; break;
+    case "saida": screen = <MovementScreen type="saida" items={db.items} movements={db.movements} setMovements={setMovements} user={user} showToast={showToast}/>; break;
+    case "inventario": screen = <InventoryScreen items={db.items} categories={db.categories} movements={db.movements} setMovements={setMovements} user={user} showToast={showToast}/>; break;
+    case "relatorios": screen = <ReportsScreen items={db.items} categories={db.categories} suppliers={db.suppliers} movements={db.movements} showToast={showToast}/>; break;
+    case "minimo": screen = <LowStockScreen items={db.items} categories={db.categories} suppliers={db.suppliers} movements={db.movements} setRoute={setRoute}/>; break;
+    default: screen = <Dashboard items={db.items} categories={db.categories} movements={db.movements} setRoute={setRoute} user={user}/>;
+  }
+
+  return (
+    <div className="min-h-screen pb-6">
+      <TopBar title={ROUTE_TITLES[route]} onMenu={()=>setDrawerOpen(true)} />
+      <Drawer open={drawerOpen} onClose={()=>setDrawerOpen(false)} route={route} setRoute={setRoute} user={user} onLogout={handleLogout} lowCount={lowCount} />
+      {screen}
+      <Toast toast={toast}/>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
