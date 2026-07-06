@@ -8,7 +8,7 @@
 // descartarem a versão antiga salva no celular em vez de continuar
 // servindo um arquivo desatualizado (ou quebrado) para sempre.
 
-const CACHE_NAME = "daga-warehouse-v2";
+const CACHE_NAME = "daga-warehouse-v3";
 const ASSETS = [
   "./index.html",
   "./manifest.json",
